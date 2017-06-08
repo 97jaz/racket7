@@ -22,9 +22,13 @@
 
 (define-record-type Lf
   [fields (immutable hash)
-          (immutable key)
-          (immutable value)]
-  [nongenerative #{Lf pfwguidjcvqbvofiirp097jco-2}]
+          (immutable key)]
+  [nongenerative #{Lf pfwguidjcvqbvofiirp097jco-2}])
+
+(define-record-type Lf*
+  [parent Lf]
+  [fields (immutable value)]
+  [nongenerative #{Lf* pfwguidjcvqbvofiirp097jco-4}]
   [sealed #t])
 
 (define-record-type Co
@@ -84,7 +88,7 @@
 
    [(Lf? t)
     (if (key=? et key (Lf-key t))
-        (Lf-value t)
+        (lf-value t)
         ($fail def))]
 
    [(Co? t)
@@ -111,7 +115,7 @@
           [m (Br-mask t)])
       (cond
        [(not (match-prefix? h p m))
-        (join h (make-Lf h key val) p t)]
+        (join h (lf h key val) p t)]
        [(fx<= h p) ; (zero-bit? h m)
         (br p m ($intmap-set et (Br-left t) h key val) (Br-right t))]
        [else
@@ -121,20 +125,20 @@
     (let ([j (Lf-hash t)])
       (cond
        [(not (fx= h j))
-        (join h (make-Lf h key val) j t)]
+        (join h (lf h key val) j t)]
        [(key=? et key (Lf-key t))
-        (make-Lf h key val)]
+        (lf h key val)]
        [else
-        (make-Co h (list (cons key val) (cons (Lf-key t) (Lf-value t))))]))]
+        (make-Co h (list (cons key val) (cons (Lf-key t) (lf-value t))))]))]
 
    [(Co? t)
     (let ([j (Co-hash t)])
       (if (fx= h j)
           (make-Co j ($collision-set et t key val))
-          (join h (make-Lf h key val) j t)))]
+          (join h (lf h key val) j t)))]
 
    [else
-    (make-Lf h key val)]))
+    (lf h key val)]))
 
 (define (join p0 t0 p1 t1)
   (let ([m (branching-bit p0 p1)])
@@ -239,6 +243,15 @@
       (br p m l r)
       l))
 
+(define-syntax-rule (lf h key value)
+  (if (eq? value #t)
+      (make-Lf h key)
+      (make-Lf* h key value)))
+
+(define-syntax-rule (lf-value t)
+  (or (not (Lf*? t))
+      (Lf*-value t)))
+
 (define-syntax-rule (key=? et k1 k2)
   (case et
     [(eq) (eq? k1 k2)]
@@ -296,7 +309,7 @@
 
    [(Lf? t)
     (and (fx= 0 n)
-         (cons (Lf-key t) (Lf-value t)))]
+         (cons (Lf-key t) (lf-value t)))]
 
    [(Co? t)
     (let ([pairs (Co-pairs t)])
@@ -348,7 +361,7 @@
     ($intmap-enum (Br-left t) (cons (Br-right t) next))]
 
    [(Lf? t)
-    (cons (cons (Lf-key t) (Lf-value t)) next)]
+    (cons (cons (Lf-key t) (lf-value t)) next)]
 
    [(Co? t)
     (let ([pairs (Co-pairs t)])
@@ -378,7 +391,7 @@
    [(Lf? a)
     (and (Lf? b)
          (key=? et (Lf-key a) (Lf-key b))
-         (eql? (Lf-value a) (Lf-value b)))]
+         (eql? (lf-value a) (lf-value b)))]
 
    [(Co? a)
     (and (Co? b)
@@ -415,7 +428,7 @@
 
    [(Lf? t)
     (let* ([hc (hash-code-combine hc (Lf-hash t))]
-           [hc (hash-code-combine hc (hash (Lf-value t)))])
+           [hc (hash-code-combine hc (hash (lf-value t)))])
       hc)]
 
    [(Co? t)
