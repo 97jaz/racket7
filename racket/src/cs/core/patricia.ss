@@ -1,4 +1,4 @@
-;; Immutable maps represented as bigendian Patricia tries.
+;; Immutable maps represented as big-endian Patricia tries.
 ;; Based on Okasaki & Gill's "Fast Mergeable Integer Maps,"
 ;; (1998) with an added collision node.
 ;;
@@ -8,6 +8,7 @@
 (define-record-type intmap
   [fields (immutable eqtype)
           (mutable root)]
+  [nongenerative #{intmap pfwguidjcvqbvofiirp097jco-0}]
   [sealed #t])
 
 (define-record-type Br
@@ -16,18 +17,28 @@
           (immutable mask)
           (immutable left)
           (immutable right)]
+  [nongenerative #{Br pfwguidjcvqbvofiirp097jco-1}]
   [sealed #t])
 
 (define-record-type Lf
   [fields (immutable hash)
           (immutable key)
           (immutable value)]
+  [nongenerative #{Lf pfwguidjcvqbvofiirp097jco-2}]
   [sealed #t])
 
 (define-record-type Co
   [fields (immutable hash)
           (immutable pairs)]
+  [nongenerative #{Co pfwguidjcvqbvofiirp097jco-3}]
   [sealed #t])
+
+(define-syntax define-syntax-rule
+  (syntax-rules ()
+    [(_ (name arg ...) e ...)
+     (define-syntax name
+       (syntax-rules ()
+         [(_ arg ...) e ...]))]))
 
 (define *nothing* (gensym))
 
@@ -119,7 +130,7 @@
    [(Co? t)
     (let ([j (Co-hash t)])
       (if (fx= h j)
-          ($collision-set et t key val)
+          (make-Co j ($collision-set et t key val))
           (join h (make-Lf h key val) j t)))]
 
    [else
@@ -156,9 +167,10 @@
         t)]
 
    [(Co? t)
-    (if (fx=? h (Co-hash t))
-        ($collision-remove et t key)
-        t)]
+    (let ([j (Co-hash t)])
+      (if (fx=? h j)
+          (make-Co j ($collision-remove et t key))
+          t))]
 
    [else
     #f]))
@@ -190,19 +202,19 @@
           [else (loop (cdr xs))])))
 
 ;; bit twiddling
-(define (zero-bit? h m)
+(define-syntax-rule (zero-bit? h m)
   (fx= 0 (fxand h m)))
 
-(define (match-prefix? h p m)
+(define-syntax-rule (match-prefix? h p m)
   (fx= (mask h m) p))
 
-(define (mask h m)
+(define-syntax-rule (mask h m)
   (fxand (fxior h (fx1- m)) (fxnot m)))
 
-(define (branching-bit p m)
+(define-syntax-rule (branching-bit p m)
   (highest-set-bit (fxxor p m)))
 
-(define (highest-set-bit x1)
+(define-syntax-rule (highest-set-bit x1)
   (let* ([x2 (fxior x1 (fxsrl x1 1))]
          [x3 (fxior x2 (fxsrl x2 2))]
          [x4 (fxior x3 (fxsrl x3 4))]
@@ -227,13 +239,13 @@
       (br p m l r)
       l))
 
-(define (key=? et k1 k2)
+(define-syntax-rule (key=? et k1 k2)
   (case et
     [(eq) (eq? k1 k2)]
     [(eqv) (eqv? k1 k2)]
     [else (equal? k1 k2)]))
 
-(define (hash-code et k)
+(define-syntax-rule (hash-code et k)
   (case et
     [(eq) (eq-hash-code k)]
     [(eqv) (eqv-hash-code k)]
@@ -340,7 +352,11 @@
 
    [(Co? t)
     (let ([pairs (Co-pairs t)])
-      (cons (car pairs) (cons (make-Co #f (cdr pairs)) next)))]
+      (let ([fst (car pairs)]
+            [rst (cdr pairs)])
+        (if (null? rst)
+            (cons fst next)
+            (cons fst (cons (make-Co #f rst) next)))))]
 
    [else
     next]))
