@@ -20,17 +20,21 @@
   [nongenerative #{Br pfwguidjcvqbvofiirp097jco-1}]
   [sealed #t])
 
+(define-record-type Leaf
+  [fields (immutable hash)]
+  [nongenerative #{Leaf pfwguidjcvqbvofiirp097jco-2}])
+
 (define-record-type Lf
-  [fields (immutable hash)
-          (immutable key)
+  [parent Leaf]
+  [fields (immutable key)
           (immutable value)]
-  [nongenerative #{Lf pfwguidjcvqbvofiirp097jco-2}]
+  [nongenerative #{Lf pfwguidjcvqbvofiirp097jco-3}]
   [sealed #t])
 
 (define-record-type Co
-  [fields (immutable hash)
-          (immutable pairs)]
-  [nongenerative #{Co pfwguidjcvqbvofiirp097jco-3}]
+  [parent Leaf]
+  [fields (immutable pairs)]
+  [nongenerative #{Co pfwguidjcvqbvofiirp097jco-4}]
   [sealed #t])
 
 (define *nothing* (gensym))
@@ -83,7 +87,7 @@
         ($fail def))]
 
    [(Co? t)
-    (if (fx= h (Co-hash t))
+    (if (fx= h (Leaf-hash t))
         ($collision-ref et t key def)
         ($fail def))]
 
@@ -113,17 +117,20 @@
         (br p m (Br-left t) ($intmap-set et (Br-right t) h key val))]))]
 
    [(Lf? t)
-    (let ([j (Lf-hash t)])
+    (let ([j (Leaf-hash t)])
       (cond
        [(not (fx= h j))
         (join h (make-Lf h key val) j t)]
        [(key=? et key (Lf-key t))
-        (make-Lf h key val)]
+        (let ([orig-val (Lf-value t)])
+          (if (eq? val orig-val)
+              t
+              (make-Lf h key val)))]
        [else
         (make-Co h (list (cons key val) (cons (Lf-key t) (Lf-value t))))]))]
 
    [(Co? t)
-    (let ([j (Co-hash t)])
+    (let ([j (Leaf-hash t)])
       (if (fx= h j)
           (make-Co j ($collision-set et t key val))
           (join h (make-Lf h key val) j t)))]
@@ -163,7 +170,7 @@
 
    [(Co? t)
     (cond
-     [(fx=? h (Co-hash t))
+     [(fx=? h (Leaf-hash t))
       ;; A collision node always has at least 2 key-value pairs,
       ;; so when we remove one, we know the resulting list is non-empty.
       (let ([pairs ($collision-remove et t key)])
@@ -225,6 +232,12 @@
 (define (br p m l r)
   (let ([c (fx+ ($intmap-count l) ($intmap-count r))])
     (make-Br c p m l r)))
+
+(define (br* p m l r)
+  (cond
+   [(not r) l]
+   [(not l) r]
+   [else (br p m l r)]))
 
 (define (br/check-left p m l r)
   (if l
@@ -402,12 +415,12 @@
       hc)]
 
    [(Lf? t)
-    (let* ([hc (hash-code-combine hc (Lf-hash t))]
+    (let* ([hc (hash-code-combine hc (Leaf-hash t))]
            [hc (hash-code-combine hc (hash (Lf-value t)))])
       hc)]
 
    [(Co? t)
-    (hash-code-combine hc (Co-hash t))]
+    (hash-code-combine hc (Leaf-hash t))]
 
    [else
     (hash-code-combine hc (hash #f))]))
@@ -429,6 +442,9 @@
 
 (define ($intmap-keys-subset? et a b)
   (cond
+   [(eq? a b)
+    #t]
+
    [(Br? a)
     (and
      (Br? b)
@@ -450,13 +466,258 @@
               ($intmap-keys-subset? et (Br-right a) (Br-right b)))])))]
 
    [(Lf? a)
-    ($intmap-has-key? et b (Lf-hash a) (Lf-key a))]
+    ($intmap-has-key? et b (Leaf-hash a) (Lf-key a))]
 
    [(Co? a)
     (let loop ([xs (Co-pairs a)])
       (cond [(null? xs) #t]
-            [($intmap-has-key? et b (Co-hash a) (caar xs)) (loop (cdr xs))]
+            [($intmap-has-key? et b (Leaf-hash a) (caar xs)) (loop (cdr xs))]
             [else #f]))]
 
    [else
     #t]))
+
+;; merge
+;; based on https://hackage.haskell.org/package/containers-0.5.10.2/docs/src/Data.IntMap.Internal.html#mergeWithKey%27
+(define-syntax let-br
+  (syntax-rules ()
+    [(_ ([(p m l r) t] ...) exp ...)
+     (let ([p (Br-prefix t)] ...
+           [m (Br-mask t)] ...
+           [l (Br-left t)] ...
+           [r (Br-right t)] ...)
+       exp ...)]))
+
+(define (merge/key eqtype bin id f g1 g2 t1 t2)
+  (define-syntax go
+    (syntax-rules ()
+      [(_ t1 t2) (merge/key eqtype bin id f g1 g2 t1 t2)]))
+
+  (cond
+   [(eq? t1 t2)
+    (id t1)]
+
+   [(Br? t1)
+    (cond
+     [(Br? t2)
+      (let-br
+       ([(p1 m1 l1 r1) t1] [(p2 m2 l2 r2) t2])
+       (cond
+        [(fx> m1 m2)
+         (cond
+          [(not (match-prefix? p2 p1 m1))
+           (join* p1 (g1 t1) p2 (g2 t2))]
+          [(fx<= p2 p1)
+           (bin p1 m1 (go l1 t2) (g1 r1))]
+          [else
+           (bin p1 m1 (g1 l1) (go r1 t2))])]
+
+        [(fx> m2 m1)
+         (cond
+          [(not (match-prefix? p1 p2 m2))
+           (join* p1 (g1 t1) p2 (g2 t2))]
+          [(fx<= p1 p2)
+           (bin p2 m2 (go t1 l2) (g2 r2))]
+          [else
+           (bin p2 m2 (g2 l2) (go t1 r2))])]
+
+        [(fx= p1 p2)
+         (bin p1 m1 (go l1 l2) (go r1 r2))]
+
+        [else
+         (join* p1 (g1 t1) p2 (g2 t2))]))]
+
+     [(Leaf? t2)
+      (let merge0 ([t2 t2] [h2 (Leaf-hash t2)] [t1 t1])
+        (cond
+         [(eq? t1 t2)
+          (id t1)]
+
+         [(Br? t1)
+          (let-br
+           ([(p1 m1 l1 r1) t1])
+           (cond
+            [(not (match-prefix? h2 p1 m1))
+             (join* p1 (g1 t1) h2 (g2 t2))]
+            [(fx<= h2 p1)
+             (bin p1 m1 (merge0 t2 h2 l1) (g1 r1))]
+            [else
+             (bin p1 m1 (g1 l1) (merge0 t2 h2 r1))]))]
+
+         [(Leaf? t1)
+          (let ([h1 (Leaf-hash t1)])
+            (cond
+             [(fx= h1 h2)
+              (merge/collision eqtype f g1 g2 h1 t1 t2)]
+             [else
+              (join* h1 (g1 t1) h2 (g2 t2))]))]
+
+         [else
+          (g2 t2)]))]
+
+     [else
+      (g1 t1)])]
+
+   [(Leaf? t1)
+    (let merge0 ([t1 t1] [h1 (Leaf-hash t1)] [t2 t2])
+      (cond
+       [(eq? t1 t2)
+        (id t1)]
+
+       [(Br? t2)
+        (let-br
+         ([(p2 m2 l2 r2) t2])
+         (cond
+          [(not (match-prefix? h1 p2 m2))
+           (join* h1 (g1 t1) p2 (g2 p2))]
+          [(fx<= h1 p2)
+           (bin p2 m2 (merge0 t1 h1 l2) (g2 r2))]
+          [else
+           (bin p2 m2 (g2 l2) (merge0 t1 h1 r2))]))]
+
+       [(Leaf? t2)
+        (let ([h2 (Leaf-hash t2)])
+          (cond
+           [(fx= h1 h2)
+            (merge/collision eqtype f g1 g2 h1 t1 t2)]
+           [else
+            (join* h1 (g1 t1) h2 (g2 t2))]))]
+
+       [else
+        (g1 t2)]))]
+
+   [else
+    (g2 t2)]))
+
+(define (find+rest p? xs)
+  (let loop ([r #f] [ys '()] [xs xs])
+    (cond [(null? xs)    (values r ys)]
+          [(p? (car xs)) (loop (car xs) ys (cdr xs))]
+          [else          (loop r (cons (car xs) ys) (cdr xs))])))
+
+;; pre: t1 and t2 satisfy `Leaf?` and have the same hash code
+(define (merge/collision eqtype f g1 g2 h t1 t2)
+  (cond
+   [(and (Lf? t1) (Lf? t2))
+    (merge/lf-lf eqtype f g1 g2 h t1 t2)]
+   [else
+    ;; separate k-v pairs into
+    ;; - those in both t1 and t2
+    ;; - those in t1 only (left)
+    ;; - those in t2 only (right)
+    (let loop ([both '()] [left '()] [right (leaf->pairs t2)] [xs (leaf->pairs t1)])
+      (cond
+       [(null? xs)
+        (let* ([l (g1 (pairs->leaf h left))]
+               [r (g2 (pairs->leaf h right))]
+               [pairs (append both (leaf->pairs l) (leaf->pairs r))])
+          (pairs->leaf h pairs))]
+       [else
+        (let*-values
+            ([(x)
+              (car xs)]
+             [(y ys)
+              (find+rest (lambda (y)
+                           (key=? eqtype (car x) (car y)))
+                         right)])
+          (cond
+           [y
+            (let* ([k1 (car x)]
+                   [z (f k1 (cdr x) (cdr y) *nothing*)])
+              (cond
+               [(eq? *nothing* z)
+                (loop both left ys (cdr xs))]
+               [else
+                (loop (cons (cons k1 z) both) left ys (cdr xs))]))]
+           [else
+            (loop both (cons x left) ys (cdr xs))]))]))]))
+
+;; pre: t1 and t2 are both `Lf?` with the same hash code
+(define (merge/lf-lf eqtype f g1 g2 h t1 t2)
+  (let ([k1 (Lf-key t1)]
+        [v1 (Lf-value t1)]
+        [k2 (Lf-key t2)]
+        [v2 (Lf-value t2)])
+    (cond
+     [(key=? eqtype k1 k2)
+      (let ([x (f k1 v1 v2 *nothing*)])
+        (cond
+         [(eq? *nothing* x) #f]
+         [(eq? v1 x) t1]
+         [(eq? v2 x) t2]
+         [else (make-Lf h k1 x)]))]
+     [else
+      (let ([s1 (g1 t1)]
+            [s2 (g2 t2)])
+        ;; Since g1 and g2 are only permitted to return nodes with a subset of the keys
+        ;; they were given, s1 and s2 must both be either Lf? or #f. But g1 and g2 are
+        ;; allowed to modify values.
+        (cond
+         [(not s1) s2]
+         [(not s2) s1]
+         [else (make-Co h
+                        (list (cons k1 (Lf-value s1))
+                              (cons k2 (Lf-value s2))))]))])))
+
+(define (join* p1 t1 p2 t2)
+  (cond
+   [(not t1) t2]
+   [(not t2) t1]
+   [else (join p1 t1 p2 t2)]))
+
+(define (leaf->pairs t)
+  (cond
+   [(Lf? t) (list (cons (Lf-key t) (Lf-value t)))]
+   [(Co? t) (Co-pairs t)]
+   [(not t) '()]))
+
+(define (pairs->leaf h xs)
+  (cond
+   [(null? xs) #f]
+   [(null? (cdr xs)) (make-Lf h (caar xs) (cdar xs))]
+   [else (make-Co h xs)]))
+
+(define ($union eqtype t1 t2)
+  (merge/key eqtype
+             br
+             (lambda (t) t)
+             (lambda (k v1 v2 nil) v1)
+             (lambda (t) t)
+             (lambda (t) t)
+             t1
+             t2))
+
+(define ($intersection eqtype t1 t2)
+  (merge/key eqtype
+             br*
+             (lambda (t) t)
+             (lambda (k v1 v2 nil) v1)
+             (lambda (t) #f)
+             (lambda (t) #f)
+             t1
+             t2))
+
+(define ($difference eqtype t1 t2)
+  (merge/key eqtype
+             br*
+             (lambda (t) #f)
+             (lambda (k v1 v2 nil) nil)
+             (lambda (t) t)
+             (lambda (t) #f)
+             t1
+             t2))
+
+(define (hash-union t1 t2)
+  (let* ([et (intmap-eqtype t1)]
+         [root ($union et (intmap-root t1) (intmap-root t2))])
+    (make-intmap et root)))
+
+(define (hash-intersection t1 t2)
+  (let* ([et (intmap-eqtype t1)]
+         [root ($intersection et (intmap-root t1) (intmap-root t2))])
+    (make-intmap et root)))
+
+(define (hash-difference t1 t2)
+  (let* ([et (intmap-eqtype t1)]
+         [root ($difference et (intmap-root t1) (intmap-root t2))])
+    (make-intmap et root)))

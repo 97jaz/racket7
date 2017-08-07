@@ -243,6 +243,10 @@
           impersonate-hash
           chaperone-hash
 
+	  hash-union
+	  hash-intersection
+	  hash-difference
+
           bytes shared-bytes
           bytes?
           bytes-length
@@ -571,7 +575,7 @@
 	  current-future
 	  would-be-future
 	  processor-count
-	  )	  
+	  )
   (import (chezpart)
 	  (rename (only (chezscheme) sleep)
 		  (sleep chez:sleep))
@@ -637,10 +641,10 @@
   (include "core/network.ss")
   (include "core/place.ss")
   (include "core/foreign.ss")
-  (include "core/future.ss")	
+  (include "core/future.ss")
   (include "core/queue.ss")
   (include "core/future-scheduler.ss")
-  
+
   (set-base-exception-handler!)
   (set-collect-handler!)
   (set-primitive-applicables!)
